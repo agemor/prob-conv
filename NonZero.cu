@@ -1,19 +1,13 @@
+//
+// Created by hyunjk on 4/27/21.
+//
 
-/*
- * cuCompactor.h
- *
- *  Created on: 21/mag/2015
- *      Author: knotman
- */
-
-#ifndef CUCOMPACTOR_H_
-#define CUCOMPACTOR_H_
+#include "NonZero.cuh"
 
 #include <thrust/scan.h>
 #include <thrust/device_vector.h>
 
 
-#define warpSize (32)
 #define FULL_MASK 0xffffffff
 
 __host__ __device__ int divup(int x, int y) { return x / y + (x % y ? 1 : 0); }
@@ -108,7 +102,7 @@ int get_nonzero_indices(bool *d_input, int *d_output, int length, int blockSize)
     thrust::exclusive_scan(thrustPrt_bCount, thrustPrt_bCount + numBlocks, thrustPrt_bOffset);
 //
 //    //phase 3: compute output offset for each thread in warp and each warp in thread block, then output valid elements
-    compactK<<<numBlocks, blockSize, sizeof(int) * (blockSize / warpSize)>>>(d_input, length, d_output,
+    compactK<<<numBlocks, blockSize, sizeof(int) * (blockSize / 32)>>>(d_input, length, d_output,
                                                                              d_BlocksOffset);
 //
 //    // determine number of elements in the compacted list
@@ -123,4 +117,3 @@ int get_nonzero_indices(bool *d_input, int *d_output, int length, int blockSize)
 }
 
 
-#endif /* CUCOMPACTOR_H_ */
