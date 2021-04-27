@@ -1,11 +1,7 @@
-#include <cmath>
 #include <iostream>
-#include <thrust/scan.h>
-#include <thrust/device_vector.h>
 
 #include "PrefixSum.cuh"
 #include "StreamIndexCompaction.cuh"
-#include <cuda_runtime.h>
 #include <cublas_v2.h>
 
 const int NUM_THREADS = 1024;
@@ -159,6 +155,32 @@ void gemm(const float *A, const float *B, float *C, const int m, const int k, co
     cublasDestroy(handle);
 }
 
+// column-wise, accumulates all channels to the destination image.
+__global__ void
+scol2im(float *scol, int *conv_indices, int conv_indices_len, float *base_img, int scol_num_chan, int w) {
+
+    int idx = threadIdx.x + blockDim.x * blockIdx.x;
+
+
+    if (idx < conv_indices_len) {
+
+        int img_idx = conv_indices[idx];
+
+        int img_y = img_idx / w;
+        int img_x = img_idx % w;
+
+        // accumulate all channel values to the destination.
+
+        int img_offset = img_y * w * scol_num_chan + img_x * scol_num_chan;
+        int scol_offset = idx * scol_num_chan;
+
+        for (int i = 0; i < scol_num_chan; ++i) {
+            base_img[img_offset + i] += scol[scol_offset + i];
+        }
+    }
+
+}
+
 int main() {
 
     int imgInW = 1024, imgInH = 1024;
@@ -248,9 +270,12 @@ int main() {
     gemm(s_col, convKernel, s_img, num_indices, imgInChan * kerH * kerW, imgOutChan);
 
 
-
     // STEP 6: sparse column to image
+    // Apply (inline) affine transform to prevImgOut... but right now we are just doing manual blit.
+    cudaMemcpy(currImgOut, prevImgOut, imgOutW * imgOutH * imgOutChan, cudaMemcpyKind::cudaMemcpyDeviceToDevice);
 
+    scol2im<<<getNumBlock(num_indices, NUM_THREADS), NUM_THREADS>>>(s_img, indices, num_indices, currImgOut, imgOutChan,
+                                                                    imgOutW);
 
 
     // Free memory
