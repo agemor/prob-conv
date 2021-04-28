@@ -22,6 +22,11 @@ void randn(float *dest, int n) {
     curandDestroyGenerator(gen);
 }
 
+void sparse_copy(float *dest, float *src, int n, float p) {
+    cudaMemcpy(dest, src, int((float) n * (1 - p)) * sizeof(float), cudaMemcpyDeviceToDevice);
+
+}
+
 int read_testdata(string filename, float *dest) {
 
     ifstream file(filename);
@@ -96,11 +101,15 @@ int main() {
 
     // create some duplications here
 
-    thrust::device_ptr<float> img_prev_ptr(img_prev);
-    thrust::fill(img_prev_ptr, img_prev_ptr + img_size, 0.0);
-
-    thrust::device_ptr<float> out_prev_ptr(out_prev);
-    thrust::fill(out_prev_ptr, out_prev_ptr + out_size, 0.0);
+    // sparsity = 1 (all zero)
+    // sparsity = 0 (all non-zero)
+    sparse_copy(img_prev, img, img_size, 0);
+//
+//    thrust::device_ptr<float> img_prev_ptr(img_prev);
+//    thrust::fill(img_prev_ptr, img_prev_ptr + img_size, 0.0);
+//
+//    thrust::device_ptr<float> out_prev_ptr(out_prev);
+//    thrust::fill(out_prev_ptr, out_prev_ptr + out_size, 0.0);
 
 //
 //    thrust::device_ptr<float> dev_ptr2(img_prev);
@@ -122,7 +131,7 @@ int main() {
             dilation_x, dilation_y);
 
 
-    int repeat = 1;
+    int repeat = 3;
 
     clock_t start = clock();
     for (int i = 0; i < repeat; i++) {
@@ -135,8 +144,8 @@ int main() {
                 ker_w, ker_h,
                 stride_x, stride_y,
                 pad_x, pad_y,
-                dilation_x, dilation_y);
-        printData<float>(out, out_size, 30);
+                dilation_x, dilation_y, i == 0);
+        //printData<float>(out, out_size, 30);
     }
     clock_t end = clock();
 
@@ -153,8 +162,8 @@ int main() {
                 ker_w, ker_h,
                 stride_x, stride_y,
                 pad_x, pad_y,
-                dilation_x, dilation_y);
-        printData<float>(out, out_size, 30);
+                dilation_x, dilation_y, i == 0);
+        //printData<float>(out, out_size, 30);
     }
     end = clock();
     cout << "conv: " << clock2ms(start, end) / repeat << " ms" << endl;

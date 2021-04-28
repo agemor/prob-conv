@@ -82,7 +82,6 @@ __global__ void compactK(unsigned int *d_input, int length, unsigned int *d_outp
 }
 
 
-// blockSize = n * warpSize
 int get_nonzero_indices(unsigned int *d_input, unsigned int *d_output, int length, int blockSize) {
     int numBlocks = divup(length, blockSize);
     unsigned int *d_BlocksCount;
@@ -94,24 +93,19 @@ int get_nonzero_indices(unsigned int *d_input, unsigned int *d_output, int lengt
     //phase 1: count number of valid elements in each thread block
     computeBlockCounts<<<numBlocks, blockSize>>>(d_input, length, d_BlocksCount);
 
-    //fresco::printData<unsigned int>(d_BlocksCount, numBlocks);
 
-    //fresco::printData<unsigned int>(d_BlocksOffset, numBlocks);
     thrust::device_ptr<unsigned int> thrustPrt_bCount(d_BlocksCount);
     thrust::device_ptr<unsigned int> thrustPrt_bOffset(d_BlocksOffset);
-//    //phase 2: compute exclusive prefix sum of valid block counts to get output offset for each thread block in grid
+    // phase 2: compute exclusive prefix sum of valid block counts to get output
+    // offset for each thread block in grid
     thrust::exclusive_scan(thrustPrt_bCount, thrustPrt_bCount + numBlocks, thrustPrt_bOffset);
 
-//
-//    //phase 3: compute output offset for each thread in warp and each warp in thread block, then output valid elements
-    compactK<<<numBlocks, blockSize, sizeof(int) * (blockSize / 32)>>>(d_input, length, d_output,
-                                                                       d_BlocksOffset);
-//
-//    // determine number of elements in the compacted list
-//    int a1;
-//    int a2;
-//    cudaMemcpy(&a1, &d_BlocksOffset[numBlocks - 1], sizeof(unsigned int), cudaMemcpyDeviceToDevice);
-//    cudaMemcpy(&a2, &d_BlocksCount[numBlocks - 1], sizeof(unsigned int), cudaMemcpyDeviceToDevice);
+
+    // phase 3: compute output offset for each thread in warp and each warp in thread block,
+    // then output valid elements
+    compactK<<<numBlocks, blockSize, sizeof(int) * (blockSize / 32)>>>(
+            d_input, length, d_output,
+            d_BlocksOffset);
 
     int compact_length = thrustPrt_bOffset[numBlocks - 1] + thrustPrt_bCount[numBlocks - 1];
 

@@ -16,7 +16,8 @@ namespace fresco {
                      int ker_w, int ker_h,
                      int stride_x, int stride_y,
                      int pad_x, int pad_y,
-                     int dilation_x, int dilation_y);
+                     int dilation_x, int dilation_y,
+                     bool debug = false);
 
 }
 

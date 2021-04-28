@@ -66,7 +66,8 @@ namespace fresco {
                 int ker_w, int ker_h,
                 int stride_x, int stride_y,
                 int pad_x, int pad_y,
-                int dilation_x, int dilation_y) {
+                int dilation_x, int dilation_y,
+                bool debug) {
 
 
         int out_w = (img_w + 2 * pad_x - dilation_x * (ker_w - 1) - 1) / stride_x + 1;
@@ -77,15 +78,17 @@ namespace fresco {
         cudaMalloc(&col, out_h * out_w * chan_in * ker_h * ker_w * sizeof(float));
 
         int num_tasks = out_h * out_w * chan_in;
-        im2col<<<getNumBlock(num_tasks, NUM_THREADS), NUM_THREADS>>>(img, col, chan_in, img_w, img_h, out_w, out_h,
-                                                                     ker_w, ker_h, stride_x, stride_y, pad_x, pad_y,
-                                                                     dilation_x, dilation_y);
+        im2col<<<getNumBlock(num_tasks, NUM_THREADS), NUM_THREADS>>>(
+                img, col, chan_in, img_w, img_h, out_w, out_h,
+                ker_w, ker_h, stride_x, stride_y, pad_x, pad_y,
+                dilation_x, dilation_y);
 
         //std::cout << "im2col" << std::endl;
         //printData<float>(col, out_h * out_w * chan_in * ker_h * ker_w, 30);
-
-        std::cout << "im2col size: " << out_h * out_w * chan_in * ker_h * ker_w << " (col: " << out_h * out_w << ", ker: " << ker_h * ker_w << ", chan: " << chan_in << ")" << std::endl;
-
+        if (debug) {
+            std::cout << "im2col size: " << out_h * out_w * chan_in * ker_h * ker_w << " (col: " << out_h * out_w
+                      << ", ker: " << ker_h * ker_w << ", chan: " << chan_in << ")" << std::endl;
+        }
         // STEP 2. gemm
         gemm(col, ker, out, out_h * out_w, chan_in * ker_h * ker_w, chan_out);
 

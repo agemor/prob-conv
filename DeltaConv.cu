@@ -40,14 +40,14 @@ namespace fresco {
     }
 
 
-    __global__ void convDmap(const unsigned int *d_map, unsigned int *d_map_conv,
-                             const int img_w, const int img_h,
-                             const int out_w, const int out_h,
-                             const int ker_w, const int ker_h,
-                             const int stride_x, const int stride_y,
-                             const int pad_x, const int pad_y,
-                             const int dilation_x, const int dilation_y,
-                             const int thres = 1) {
+    __global__ void binaryMaxPool(const unsigned int *d_map, unsigned int *d_map_conv,
+                                  const int img_w, const int img_h,
+                                  const int out_w, const int out_h,
+                                  const int ker_w, const int ker_h,
+                                  const int stride_x, const int stride_y,
+                                  const int pad_x, const int pad_y,
+                                  const int dilation_x, const int dilation_y,
+                                  const int thres = 1) {
 
         // t_i: 0 -> out_w * out_h
         const int t_i = threadIdx.x + blockDim.x * blockIdx.x;
@@ -152,10 +152,10 @@ namespace fresco {
 
 
     // column-wise, accumulates all channels to the destination image.
-    __global__ void unfoldIndexedImg(const unsigned int *img_indices, const int img_indices_len,
-                                     const float *img_indexed, float *img_base,
-                                     int chan,
-                                     int img_w, int img_h) {
+    __global__ void deindexImage(const unsigned int *img_indices, const int img_indices_len,
+                                 const float *img_indexed, float *img_base,
+                                 int chan,
+                                 int img_w, int img_h) {
 
         // t_i: 0 -> col_indices_len
         int t_i = threadIdx.x + blockDim.x * blockIdx.x;
@@ -187,7 +187,8 @@ namespace fresco {
                      int ker_w, int ker_h,
                      int stride_x, int stride_y,
                      int pad_x, int pad_y,
-                     int dilation_x, int dilation_y) {
+                     int dilation_x, int dilation_y,
+                     bool debug) {
 
 
         int out_w = (img_w + 2 * pad_x - dilation_x * (ker_w - 1) - 1) / stride_x + 1;
@@ -219,7 +220,7 @@ namespace fresco {
         unsigned int *out_d_map;
         cudaMalloc(&out_d_map, out_h * out_w * sizeof(unsigned int));
 
-        convDmap<<<getNumBlock(out_h * out_w, NUM_THREADS), NUM_THREADS>>>(
+        binaryMaxPool<<<getNumBlock(out_h * out_w, NUM_THREADS), NUM_THREADS>>>(
                 d_map, out_d_map,
                 img_w, img_h,
                 out_w, out_h,
@@ -245,7 +246,10 @@ namespace fresco {
         // exact same current image and prev image
         if (out_indices_len == 0) {
 
-            printf("exact same images are provided!\n");
+
+            if (debug) {
+                std::cout << "exact same images are provided!" << std::endl;
+            }
 
             cudaFree(img_diff);
             cudaFree(d_map);
@@ -276,9 +280,10 @@ namespace fresco {
 
         //std::cout << "im2scol" << std::endl;
         //printData<float>(col_indexed, out_indices_len * chan_in * ker_h * ker_w, 30);
-        std::cout << "im2spc size: " << out_indices_len * chan_in * ker_h * ker_w << " (col: " << out_indices_len
-                  << ", ker: " << ker_h * ker_w << ", chan: " << chan_in << ")" << std::endl;
-
+        if (debug) {
+            std::cout << "im2spc size: " << out_indices_len * chan_in * ker_h * ker_w << " (col: " << out_indices_len
+                      << ", ker: " << ker_h * ker_w << ", chan: " << chan_in << ")" << std::endl;
+        }
         // ************************************
         // STEP 5: (Dense) GEMM
         // ************************************
@@ -296,7 +301,7 @@ namespace fresco {
         // Apply (inline) affine transform to prevImgOut... but right now we are just doing manual blit.
         cudaMemcpy(out, out_prev, out_h * out_w * chan_out, cudaMemcpyKind::cudaMemcpyDeviceToDevice);
 
-        unfoldIndexedImg<<<getNumBlock(out_indices_len, NUM_THREADS), NUM_THREADS>>>(
+        deindexImage<<<getNumBlock(out_indices_len, NUM_THREADS), NUM_THREADS>>>(
                 out_indices, out_indices_len,
                 img_indexed,
                 out,
