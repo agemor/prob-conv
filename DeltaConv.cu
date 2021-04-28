@@ -7,7 +7,7 @@
 namespace fresco {
 
     __global__ void frameDifferencing(const float *img_curr, const float *img_prev,
-                                      float *img_out, bool *d_map,
+                                      float *img_out, unsigned int *d_map,
                                       const int chan,
                                       const int img_w, const int img_h,
                                       const float eps = 0.01) {
@@ -29,18 +29,18 @@ namespace fresco {
 
             img_out[img_idx] = delta;
 
-
             // epsilon. may slightly differ from context to context.
-            if (delta > eps) {
+            if (abs(delta) > eps) {
                 is_diff = true;
             }
         }
+
 
         d_map[t_i] = is_diff;
     }
 
 
-    __global__ void convDmap(const bool *d_map, bool *d_map_conv,
+    __global__ void convDmap(const unsigned int *d_map, unsigned int *d_map_conv,
                              const int img_w, const int img_h,
                              const int out_w, const int out_h,
                              const int ker_w, const int ker_h,
@@ -78,7 +78,7 @@ namespace fresco {
                     const int img_idx = img_y * img_w + img_x;
 
                     if (d_map[img_idx]) {
-                        count++;
+                        ++count;
                         if (count >= thres) {
                             exit_loop = true;
                             break;
@@ -99,7 +99,7 @@ namespace fresco {
     }
 
 
-    __global__ void im2colIndexed(const int *col_indices, const int col_indices_len,
+    __global__ void im2colIndexed(const unsigned int *col_indices, const int col_indices_len,
                                   const float *img, float *col_indexed,
                                   const int chan,
                                   const int img_w, const int img_h,
@@ -137,19 +137,22 @@ namespace fresco {
 
                 int img_x = ker_x * dilation_x + img_x_offset;
 
-                if (img_y >= 0 && img_x >= 0 && img_y < img_h && img_x < img_w) {
+                float val = 0.0;
 
+                if (img_y >= 0 && img_x >= 0 && img_y < img_h && img_x < img_w) {
                     int img_idx = img_y * img_w * chan + img_x * chan + chan_i;
-                    int col_idx = col_idx_offset + ker_y * ker_w + ker_x;
-                    col_indexed[col_idx] = img[img_idx];
+                    val = img[img_idx];
                 }
+
+                int col_idx = col_idx_offset + ker_y * ker_w + ker_x;
+                col_indexed[col_idx] = val;
             }
         }
     }
 
 
     // column-wise, accumulates all channels to the destination image.
-    __global__ void unfoldIndexedImg(const int *img_indices, const int img_indices_len,
+    __global__ void unfoldIndexedImg(const unsigned int *img_indices, const int img_indices_len,
                                      const float *img_indexed, float *img_base,
                                      int chan,
                                      int img_w, int img_h) {
@@ -187,8 +190,8 @@ namespace fresco {
                      int dilation_x, int dilation_y) {
 
 
-        int out_w = (img_w + 2 * pad_x - dilation_x * (ker_w - 1) - 1) / stride_x;
-        int out_h = (img_h + 2 * pad_y - dilation_y * (ker_h - 1) - 1) / stride_y;
+        int out_w = (img_w + 2 * pad_x - dilation_x * (ker_w - 1) - 1) / stride_x + 1;
+        int out_h = (img_h + 2 * pad_y - dilation_y * (ker_h - 1) - 1) / stride_y + 1;
 
         // ************************************
         // STEP 1: Frame differencing
@@ -198,9 +201,9 @@ namespace fresco {
         // currImg - affineTransform(prevImg) 의 결과. 여기서 prevImg에 적용되는 아핀변환은 diffImg의 sparsity를 최대화할 수 있어야 함.
 
         float *img_diff;
-        bool *d_map; // dim [H, W] | 모든 채널이 같으면 0 ('같다'의 기준을 조금 널널하게 할 수도 있을듯), 하나라도 다르면 1.
+        unsigned int *d_map; // dim [H, W] | 모든 채널이 같으면 0 ('같다'의 기준을 조금 널널하게 할 수도 있을듯), 하나라도 다르면 1.
         cudaMalloc(&img_diff, img_h * img_w * chan_in * sizeof(float));
-        cudaMalloc(&d_map, img_h * img_w * sizeof(bool));
+        cudaMalloc(&d_map, img_h * img_w * sizeof(unsigned int));
 
         frameDifferencing<<<getNumBlock(img_h * img_w, NUM_THREADS), NUM_THREADS>>>(
                 img, img_prev,
@@ -208,12 +211,13 @@ namespace fresco {
                 chan_in,
                 img_w, img_h);
 
+
         // ************************************
         // STEP 2: Apply max convolution to d_map
         // ************************************
 
-        bool *out_d_map;
-        cudaMalloc(&out_d_map, out_h * out_w * sizeof(bool));
+        unsigned int *out_d_map;
+        cudaMalloc(&out_d_map, out_h * out_w * sizeof(unsigned int));
 
         convDmap<<<getNumBlock(out_h * out_w, NUM_THREADS), NUM_THREADS>>>(
                 d_map, out_d_map,
@@ -224,17 +228,24 @@ namespace fresco {
                 pad_x, pad_y,
                 dilation_x, dilation_y);
 
+        //printDeviceDataBool(out_d_map, out_h * out_w);
         // ************************************
         // STEP 3: Convert out_d_map into sparse form
         // ************************************
 
-        int *out_indices;
-        cudaMalloc(&out_indices, out_h * out_w * sizeof(int));
+        unsigned int *out_indices;
+        cudaMalloc(&out_indices, out_h * out_w * sizeof(unsigned int));
 
         int out_indices_len = get_nonzero_indices(out_d_map, out_indices, out_h * out_w, 32 * 4);
 
+        //printData<int>(out_indices, out_indices_len);
+
+
+
         // exact same current image and prev image
         if (out_indices_len == 0) {
+
+            printf("exact same images are provided!\n");
 
             cudaFree(img_diff);
             cudaFree(d_map);
@@ -263,11 +274,14 @@ namespace fresco {
                 pad_x, pad_y,
                 dilation_x, dilation_y);
 
+        //std::cout << "im2scol" << std::endl;
+        //printData<float>(col_indexed, out_indices_len * chan_in * ker_h * ker_w, 30);
+        std::cout << "im2spc size: " << out_indices_len * chan_in * ker_h * ker_w << " (col: " << out_indices_len
+                  << ", ker: " << ker_h * ker_w << ", chan: " << chan_in << ")" << std::endl;
 
         // ************************************
         // STEP 5: (Dense) GEMM
         // ************************************
-
 
         float *img_indexed;
         cudaMalloc(&img_indexed, out_indices_len * chan_out * sizeof(float));

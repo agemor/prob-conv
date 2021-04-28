@@ -4,9 +4,6 @@
 
 #include "NonZero.cuh"
 
-#include <thrust/scan.h>
-#include <thrust/device_vector.h>
-
 
 #define FULL_MASK 0xffffffff
 
@@ -17,7 +14,7 @@ __device__ __inline__ int pow2i(int e) {
 }
 
 
-__global__ void computeBlockCounts(const bool *d_input, int length, int *d_BlockCounts) {
+__global__ void computeBlockCounts(const unsigned int *d_input, int length, unsigned int *d_BlockCounts) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     if (idx < length) {
         int pred = d_input[idx];
@@ -30,11 +27,13 @@ __global__ void computeBlockCounts(const bool *d_input, int length, int *d_Block
 }
 
 
-__global__ void compactK(bool *d_input, int length, int *d_output, int *d_BlocksOffset) {
+__global__ void compactK(unsigned int *d_input, int length, unsigned int *d_output, unsigned int *d_BlocksOffset) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     extern __shared__ int warpTotals[];
     if (idx < length) {
         int pred = d_input[idx];
+
+
         int w_i = threadIdx.x / warpSize; //warp index
         int w_l = idx % warpSize;//thread index within a warp
 
@@ -84,29 +83,35 @@ __global__ void compactK(bool *d_input, int length, int *d_output, int *d_Blocks
 
 
 // blockSize = n * warpSize
-int get_nonzero_indices(bool *d_input, int *d_output, int length, int blockSize) {
+int get_nonzero_indices(unsigned int *d_input, unsigned int *d_output, int length, int blockSize) {
     int numBlocks = divup(length, blockSize);
-    int *d_BlocksCount;
-    int *d_BlocksOffset;
+    unsigned int *d_BlocksCount;
+    unsigned int *d_BlocksOffset;
 
-    cudaMalloc(&d_BlocksCount, sizeof(int) * numBlocks);
-    cudaMalloc(&d_BlocksOffset, sizeof(int) * numBlocks);
-    thrust::device_ptr<int> thrustPrt_bCount(d_BlocksCount);
-    thrust::device_ptr<int> thrustPrt_bOffset(d_BlocksOffset);
-
+    cudaMalloc(&d_BlocksCount, sizeof(unsigned int) * numBlocks);
+    cudaMalloc(&d_BlocksOffset, sizeof(unsigned int) * numBlocks);
 
     //phase 1: count number of valid elements in each thread block
     computeBlockCounts<<<numBlocks, blockSize>>>(d_input, length, d_BlocksCount);
 
+    //fresco::printData<unsigned int>(d_BlocksCount, numBlocks);
+
+    //fresco::printData<unsigned int>(d_BlocksOffset, numBlocks);
+    thrust::device_ptr<unsigned int> thrustPrt_bCount(d_BlocksCount);
+    thrust::device_ptr<unsigned int> thrustPrt_bOffset(d_BlocksOffset);
 //    //phase 2: compute exclusive prefix sum of valid block counts to get output offset for each thread block in grid
     thrust::exclusive_scan(thrustPrt_bCount, thrustPrt_bCount + numBlocks, thrustPrt_bOffset);
+
 //
 //    //phase 3: compute output offset for each thread in warp and each warp in thread block, then output valid elements
     compactK<<<numBlocks, blockSize, sizeof(int) * (blockSize / 32)>>>(d_input, length, d_output,
-                                                                             d_BlocksOffset);
+                                                                       d_BlocksOffset);
 //
 //    // determine number of elements in the compacted list
-
+//    int a1;
+//    int a2;
+//    cudaMemcpy(&a1, &d_BlocksOffset[numBlocks - 1], sizeof(unsigned int), cudaMemcpyDeviceToDevice);
+//    cudaMemcpy(&a2, &d_BlocksCount[numBlocks - 1], sizeof(unsigned int), cudaMemcpyDeviceToDevice);
 
     int compact_length = thrustPrt_bOffset[numBlocks - 1] + thrustPrt_bCount[numBlocks - 1];
 
